@@ -1,6 +1,8 @@
 # dependencies (bun install)
 node_modules
 
+sessions/
+
 # output
 out
 dist
@@ -32,3 +34,12 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Baileys WhatsApp session (contains login credentials — never commit)
+sessions/
+
+# Leftover local SQLite from before Neon migration
+whatsapp_scheduler.db
+whatsapp_scheduler.db-journal
+whatsapp_scheduler.db-wal
+whatsapp_scheduler.db-shm

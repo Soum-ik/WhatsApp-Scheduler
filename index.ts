@@ -1,101 +1,41 @@
-import { connectToWhatsApp } from "./src/whatsapp/client";
-import "./src/scheduler/worker"; // Start the worker
-import {
-  handleScheduleMessage,
-  handleGetMessages,
-  handleGetMessage,
-  handleDeleteMessage,
-  handleSendNow,
-  handleGetStatus,
-} from "./src/api/routes";
+import { env } from "./src/config/env";
+import { migrate } from "./src/infra/db/migrator";
+import { sql } from "./src/infra/db/pool";
+import { createServer } from "./src/http/server";
+import { startWorker } from "./src/infra/queue/worker";
+import { queue } from "./src/infra/queue/scheduler";
+import { redis } from "./src/infra/queue/connection";
+import * as clientManager from "./src/infra/whatsapp/client-manager";
+import { createLogger } from "./src/shared/logger";
 
-console.log("🚀 Starting WhatsApp Scheduler...\n");
+const log = createLogger("boot");
 
-// Connect to WhatsApp
-connectToWhatsApp().catch((error) => {
-  console.error("❌ Failed to connect to WhatsApp:", error);
+let ready = false;
+const app = createServer({ isReady: () => ready });
+const server = app.listen(env.PORT, () => log.info(`listening on :${env.PORT}`));
+
+let worker: Awaited<ReturnType<typeof startWorker>> | null = null;
+
+(async () => {
+  await migrate();
+  worker = startWorker();
+  ready = true;
+  log.info("ready");
+})().catch((err) => {
+  log.error("boot failed", err);
   process.exit(1);
 });
 
-// Start the API server
-const server = Bun.serve({
-  port: process.env.PORT || 3000,
-  async fetch(req) {
-    const url = new URL(req.url);
+const shutdown = async (signal: string) => {
+  log.info(`received ${signal}, shutting down`);
+  server.close();
+  try { await worker?.close(); } catch (e) { log.warn("worker close", e); }
+  try { await queue.close(); } catch (e) { log.warn("queue close", e); }
+  try { await clientManager.shutdown(); } catch (e) { log.warn("wa shutdown", e); }
+  try { redis.disconnect(); } catch (e) { log.warn("redis disconnect", e); }
+  try { await sql.end(); } catch (e) { log.warn("sql end", e); }
+  process.exit(0);
+};
 
-    // CORS headers for all responses
-    const corsHeaders = {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    };
-
-    // Handle CORS preflight
-    if (req.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders });
-    }
-
-    // Helper to add CORS headers to response
-    const addCorsHeaders = (response: Response) => {
-      Object.entries(corsHeaders).forEach(([key, value]) => {
-        response.headers.set(key, value);
-      });
-      return response;
-    };
-
-    // Routes
-    if (url.pathname === "/api/schedule" && req.method === "POST") {
-      return addCorsHeaders(await handleScheduleMessage(req));
-    }
-
-    if (url.pathname === "/api/send" && req.method === "POST") {
-      return addCorsHeaders(await handleSendNow(req));
-    }
-
-    if (url.pathname === "/api/messages" && req.method === "GET") {
-      return addCorsHeaders(await handleGetMessages(req));
-    }
-
-    if (url.pathname.match(/^\/api\/messages\/\d+$/) && req.method === "GET") {
-      const id = url.pathname.split("/").pop()!;
-      return addCorsHeaders(await handleGetMessage(req, { id }));
-    }
-
-    if (url.pathname.match(/^\/api\/messages\/\d+$/) && req.method === "DELETE") {
-      const id = url.pathname.split("/").pop()!;
-      return addCorsHeaders(await handleDeleteMessage(req, { id }));
-    }
-
-    if (url.pathname === "/api/status" && req.method === "GET") {
-      return addCorsHeaders(await handleGetStatus(req));
-    }
-
-    if (url.pathname === "/" || url.pathname === "/health") {
-      return addCorsHeaders(
-        Response.json({
-          status: "ok",
-          service: "WhatsApp Scheduler API",
-          version: "1.0.0",
-        })
-      );
-    }
-
-    // 404 Not Found
-    return addCorsHeaders(
-      Response.json(
-        { error: "Not Found" },
-        { status: 404 }
-      )
-    );
-  },
-});
-
-console.log(`\n✅ Server started on http://localhost:${server.port}`);
-console.log(`\n📋 Available endpoints:`);
-console.log(`   POST   /api/schedule        - Schedule a message`);
-console.log(`   POST   /api/send            - Send immediate message`);
-console.log(`   GET    /api/messages        - Get all messages`);
-console.log(`   GET    /api/messages/:id    - Get message by ID`);
-console.log(`   DELETE /api/messages/:id    - Cancel/delete message`);
-console.log(`   GET    /api/status          - Get connection status`);
-console.log(`   GET    /health              - Health check\n`);
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
