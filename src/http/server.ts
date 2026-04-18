@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import path from "node:path";
 import { authRoutes } from "./routes/auth.routes";
 import { whatsappRoutes } from "./routes/whatsapp.routes";
 import { scheduleRoutes } from "./routes/schedule.routes";
@@ -13,7 +14,15 @@ export interface AppDeps {
 export const createServer = ({ isReady }: AppDeps) => {
   const app = express();
 
-  app.use(helmet());
+  app.use(helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "script-src": ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+        "connect-src": ["'self'"],
+      },
+    },
+  }));
   app.use(cors());
   app.use(express.json({ limit: "1mb" }));
 
@@ -23,6 +32,10 @@ export const createServer = ({ isReady }: AppDeps) => {
       return;
     }
     res.json({ status: "ok" });
+  });
+
+  app.get("/qr", (_req, res) => {
+    res.sendFile(path.resolve(process.cwd(), "qr.html"));
   });
 
   app.use("/auth", authRoutes);

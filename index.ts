@@ -1,6 +1,5 @@
 import { env } from "./src/config/env";
 import { migrate } from "./src/infra/db/migrator";
-import { sql } from "./src/infra/db/pool";
 import { createServer } from "./src/http/server";
 import { startWorker } from "./src/infra/queue/worker";
 import { queue } from "./src/infra/queue/scheduler";
@@ -33,7 +32,6 @@ const shutdown = async (signal: string) => {
   try { await queue.close(); } catch (e) { log.warn("queue close", e); }
   try { await clientManager.shutdown(); } catch (e) { log.warn("wa shutdown", e); }
   try { redis.disconnect(); } catch (e) { log.warn("redis disconnect", e); }
-  try { await sql.end(); } catch (e) { log.warn("sql end", e); }
   process.exit(0);
 };
 

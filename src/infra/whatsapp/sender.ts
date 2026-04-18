@@ -20,8 +20,10 @@ export const validateRecipient = async (
     const socket = await ensureConnected(userId);
     if (!socket) throw new Error("WhatsApp not connected");
     const results = await socket.onWhatsApp(e164);
+    console.log("Validation results for", e164, results);
     return Boolean(results?.[0]?.exists);
   }
   const results = await entry.socket.onWhatsApp(e164);
+  console.log("Validation results for", e164, results);
   return Boolean(results?.[0]?.exists);
 };

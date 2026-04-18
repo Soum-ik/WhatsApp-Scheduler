@@ -61,7 +61,7 @@ export const getSignalKeys = async (
   if (ids.length === 0) return {};
   const rows = await sql`
     SELECT key_id, value FROM whatsapp_signal_keys
-    WHERE user_id = ${userId} AND type = ${type} AND key_id = ANY(${ids})
+    WHERE user_id = ${userId} AND type = ${type} AND key_id = ANY(${ids}::text[])
   ` as { key_id: string; value: unknown }[];
   const out: Record<string, unknown> = {};
   for (const r of rows) out[r.key_id] = r.value;

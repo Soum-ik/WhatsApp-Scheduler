@@ -2,13 +2,15 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
 } from "@whiskeysockets/baileys";
-import type { WASocket } from "@whiskeysockets/baileys";
+import type { AuthenticationState, WASocket } from "@whiskeysockets/baileys";
 import { EventEmitter } from "node:events";
+import qrcode from "qrcode-terminal";
 import { createDbAuthState } from "./db-auth-state";
 import * as sessionRepo from "../repos/whatsapp-session.repo";
 import { createLogger } from "../../shared/logger";
 
 const log = createLogger("client-manager");
+const PRINT_QR = process.env.PRINT_QR !== "false";
 
 type Entry = {
   socket: WASocket;
@@ -25,9 +27,15 @@ export const getClient = (userId: string): Entry | undefined => clients.get(user
 export const isConnected = (userId: string): boolean =>
   clients.get(userId)?.status === "connected";
 
-const buildSocket = async (userId: string): Promise<Entry> => {
-  const events = new EventEmitter();
-  const { state, saveCreds } = await createDbAuthState(userId);
+type AuthBundle = { state: AuthenticationState; saveCreds: () => Promise<void> };
+
+const buildSocket = async (
+  userId: string,
+  existingAuth?: AuthBundle,
+  existingEvents?: EventEmitter,
+): Promise<Entry> => { const events = existingEvents ?? new EventEmitter();
+  const auth = existingAuth ?? await createDbAuthState(userId);
+  const { state, saveCreds } = auth;
   const { version } = await fetchLatestBaileysVersion();
 
   const socket = makeWASocket({ version, auth: state });
@@ -44,6 +52,10 @@ const buildSocket = async (userId: string): Promise<Entry> => {
       entry.status = "qr";
       await sessionRepo.updateStatus(userId, "qr");
       events.emit("qr", qr);
+      if (PRINT_QR) {
+        log.info(`user=${userId} scan this QR in WhatsApp → Linked Devices:`);
+        qrcode.generate(qr, { small: true });
+      }
     }
 
     if (connection === "open") {
@@ -57,16 +69,32 @@ const buildSocket = async (userId: string): Promise<Entry> => {
     if (connection === "close") {
       const reason = (lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
       const loggedOut = reason === DisconnectReason.loggedOut;
+      const restartRequired = reason === DisconnectReason.restartRequired;
       entry.status = "closed";
-      events.emit("closed", { loggedOut });
       clients.delete(userId);
       log.warn(`user=${userId} closed (reason=${reason}, loggedOut=${loggedOut})`);
 
       if (loggedOut) {
         await sessionRepo.clearSession(userId);
-      } else {
-        await sessionRepo.updateStatus(userId, "disconnected");
+        events.emit("closed", { loggedOut });
+        return;
       }
+
+      if (restartRequired) {
+        log.info(`user=${userId} restart required, reconnecting with in-memory state`);
+        try {
+          const next = await buildSocket(userId, auth, events);
+          clients.set(userId, next);
+        } catch (err) {
+          log.error(`user=${userId} reconnect failed`, err);
+          events.emit("closed", { loggedOut: false });
+          await sessionRepo.updateStatus(userId, "disconnected");
+        }
+        return;
+      }
+
+      events.emit("closed", { loggedOut });
+      await sessionRepo.updateStatus(userId, "disconnected");
     }
   });
 

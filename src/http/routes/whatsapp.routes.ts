@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import rateLimit from "express-rate-limit";
 import * as whatsapp from "../../services/whatsapp.service";
 import { requireAuth } from "../middleware/auth";
@@ -8,6 +9,18 @@ const qrLimiter = rateLimit({
   limit: 5,
   standardHeaders: "draft-7",
   legacyHeaders: false,
+});
+
+const sendLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+});
+
+const sendSchema = z.object({
+  message: z.string().min(1).max(4096),
+  recipients: z.array(z.string()).min(1).max(100),
 });
 
 export const whatsappRoutes = Router();
@@ -67,10 +80,29 @@ whatsappRoutes.get("/status", requireAuth, async (req, res, next) => {
   }
 });
 
+whatsappRoutes.get("/link", requireAuth, (req, res) => {
+  const header = req.header("authorization");
+  const token = header?.startsWith("Bearer ")
+    ? header.slice("Bearer ".length)
+    : (typeof req.query.token === "string" ? req.query.token : "");
+  const url = `${req.protocol}://${req.get("host")}/qr?token=${encodeURIComponent(token)}`;
+  res.json({ url });
+});
+
 whatsappRoutes.post("/disconnect", requireAuth, async (req, res, next) => {
   try {
     await whatsapp.disconnect(req.userId!);
     res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+whatsappRoutes.post("/send", requireAuth, sendLimiter, async (req, res, next) => {
+  try {
+    const body = sendSchema.parse(req.body);
+    const results = await whatsapp.sendNow(req.userId!, body.recipients, body.message);
+    res.json({ results });
   } catch (e) {
     next(e);
   }

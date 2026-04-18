@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Link WhatsApp</title>
+  <style>
+    body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 40px; }
+    #qr { margin-top: 20px; }
+    #status { margin-top: 16px; color: #555; }
+    input { width: 480px; padding: 8px; font-family: monospace; }
+    button { padding: 8px 16px; margin-left: 8px; }
+  </style>
+</head>
+<body>
+  <h2>Link WhatsApp</h2>
+  <div>
+    <input id="token" placeholder="Paste JWT from /auth/signin" />
+    <button id="go">Start</button>
+  </div>
+  <canvas id="qr"></canvas>
+  <div id="status"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script>
+    const statusEl = document.getElementById("status");
+    const tokenEl = document.getElementById("token");
+    const goBtn = document.getElementById("go");
+    const setStatus = (msg) => { statusEl.textContent = msg; };
+
+    goBtn.addEventListener("click", () => {
+      const token = tokenEl.value.trim();
+      if (!token) { setStatus("Paste your JWT first."); return; }
+
+      setStatus("Connecting...");
+      const es = new EventSource(`/whatsapp/qr?token=${encodeURIComponent(token)}`);
+
+      es.addEventListener("qr", (e) => {
+        const { qr } = JSON.parse(e.data);
+        QRCode.toCanvas(document.getElementById("qr"), qr, { width: 320 });
+        setStatus("Scan with WhatsApp → Linked Devices → Link a Device");
+      });
+
+      es.addEventListener("connected", () => {
+        es.close();
+        setStatus("✅ Linked!");
+      });
+
+      es.addEventListener("closed", (e) => {
+        const { loggedOut } = JSON.parse(e.data);
+        setStatus(loggedOut ? "Session invalidated — refresh and retry." : "Connection closed — refresh to retry.");
+        es.close();
+      });
+
+      es.onerror = () => {
+        setStatus("Stream error (check token / server).");
+        es.close();
+      };
+    });
+
+    const urlToken = new URLSearchParams(location.search).get("token");
+    if (urlToken) {
+      tokenEl.value = urlToken;
+      goBtn.click();
+    }
+  </script>
+</body>
+</html>

@@ -12,9 +12,12 @@ declare global {
 
 export const requireAuth = (req: Request, _res: Response, next: NextFunction) => {
   const header = req.header("authorization");
-  if (!header?.startsWith("Bearer ")) return next(unauthorized("Missing bearer token"));
+  const headerToken = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
+  const queryToken = typeof req.query.token === "string" ? req.query.token : null;
+  const token = headerToken ?? queryToken;
+  if (!token) return next(unauthorized("Missing bearer token"));
   try {
-    const { sub } = verifyToken(header.slice("Bearer ".length));
+    const { sub } = verifyToken(token);
     req.userId = sub;
     next();
   } catch {
